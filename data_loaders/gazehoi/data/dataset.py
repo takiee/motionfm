@@ -99,7 +99,7 @@ class GazeHOIDataset_o2h_mid(data.Dataset):
         self.root = '/root/code/seqs/0303_data/'
         self.obj_path = '/root/code/seqs/object/'
         with open(datapath,'r') as f:
-            info_list = f.readlines()
+            info_list = f.readlines()[:64]
         self.seqs = []
         for info in info_list:
             seq = info.strip()
@@ -703,97 +703,6 @@ class GazeHOIDataset_g2ho(data.Dataset):
         return data['motion'], data['gaze'], data['obj_verts'],data['obj_pose'],data['hand_pose'],data['seq_length'],data['seq']
 
 
-class GazeHOIDataset_o2h(data.Dataset):
-    def __init__(self, mode='stage1', datapath='/root/code/seqs/gazehoi_list_train_0718.txt', split='train',hint_type='goal_pose'):
-        # super().__init__()
-        if split == 'test':
-            datapath = '/root/code/seqs/gazehoi_list_test_0718.txt'
-        print(datapath)
-        self.root = '/root/code/seqs/0303_data/'
-        self.obj_path = '/root/code/seqs/object/'
-        self.pred_obj_root = '/nas/gazehoi-diffusion/final_result/0725_stage0_1obj_000100000_seed10/'
-        with open(datapath,'r') as f:
-            info_list = f.readlines()
-        self.seqs = []
-        for info in info_list:
-            seq = info.strip()
-            self.seqs.append(seq)
-        self.hint_type = hint_type
-        self.datalist = []
-        self.fps = 6
-        self.target_length = 150
-        print(len(self.seqs))
-        for seq in tqdm(self.seqs):
-            seq_path = join(self.root,seq)
-            meta_path = join(seq_path,'meta.pkl')
-            
-            right_mano_path = join(seq_path, 'mano/poses_right.npy')
-            left_mano_path = join(seq_path, 'mano/poses_left.npy')
-            right_hand_params = np.load(right_mano_path)[:,:51]
-            left_hand_params = np.load(left_mano_path)[:,:51]
-
-            with open(meta_path,'rb')as f:
-                meta = pickle.load(f)
-            active_obj = meta['active_obj']
-
-            obj_verts = np.load(join(self.obj_path,active_obj,'resampled_500_trans.npy'))
-            if split == 'train':
-                obj_pose = np.load(join(seq_path,active_obj+'_pose_trans.npy')).reshape(-1,3,4)
-                new_verts = obj_verts @ obj_pose[0,:3,:3].T + obj_pose[0,:3,3].reshape(1,3)
-
-                seq_len = right_hand_params.shape[0]
-                if seq_len >= self.target_length:
-                    indices = torch.linspace(0, seq_len - 1, steps=self.target_length).long()
-                    right_hand_params = right_hand_params[indices]
-                    left_hand_params = left_hand_params[indices]
-                    obj_pose = obj_pose[indices].reshape(-1,12)
-                else:
-                    pad_width = ((0,self.target_length-seq_len), (0, 0))
-                    right_hand_params = np.pad(right_hand_params,pad_width,mode='edge')
-                    left_hand_params = np.pad(left_hand_params,pad_width,mode='edge')
-                    obj_pose = np.pad(obj_pose.reshape(-1,12),pad_width,mode='edge')
-                
-                step = int(30/self.fps)
-                for i in range(step):
-                    # print(i)
-                    right_hand_params_lowfps = right_hand_params[i::step]
-                    left_hand_params_lowfps = left_hand_params[i::step]
-                    obj_pose_lowfps = obj_pose[i::step]
-                    # print(left_hand_params_lowfps.shape,right_hand_params_lowfps.shape,obj_pose_lowfps.shape)
-                    hand_pose = np.concatenate((left_hand_params_lowfps,right_hand_params_lowfps),axis=-1)
-                    data = {'motion': hand_pose, 
-                            'hand_pose':hand_pose,
-                            'obj_verts':new_verts,
-                            'obj_pose': obj_pose_lowfps,
-                            'seq_length': obj_pose_lowfps.shape[0],
-                            'seq':seq}
-                    self.datalist.append(data)
-                    break
-            if split == 'test':
-                # print('here!')
-                obj_pose = np.load(join(self.pred_obj_root,seq,'pred_obj_pose.npy'))
-                new_verts = obj_verts @ obj_pose[0,:3,:3].T + obj_pose[0,:3,3].reshape(1,3)
-                right_hand_params = np.load(join(self.pred_obj_root,seq,'gt_right_mano.npy'))[:,:51]
-                left_hand_params = np.load(join(self.pred_obj_root,seq,'gt_left_mano.npy'))[:,:51]
-                hand_pose = np.concatenate((left_hand_params,right_hand_params),axis=-1)
-                data = {'motion': hand_pose, 
-                        'hand_pose':hand_pose,
-                        'obj_verts':new_verts,
-                        'obj_pose': obj_pose.reshape(-1,12),
-                        'seq_length': obj_pose.shape[0],
-                        'seq':seq}
-                self.datalist.append(data)
-
-    
-    def __len__(self):
-        return len(self.datalist)
-
-    def __getitem__(self, index):
-        data = self.datalist[index]
-        return data['motion'], data['obj_verts'],data['obj_pose'],data['hand_pose'],data['seq_length'],data['seq']
-
-""""""
-
 def read_xyz(path):
     data = []
     with open(path,'r') as f:
@@ -812,8 +721,8 @@ def read_xyz(path):
 
 
 class GazeHOIDataset_stage0_1obj(data.Dataset):
-    def __init__(self, mode='stage0', datapath='/root/code/seqs/gazehoi_list_train_0718_new.txt', split='train',hint_type='goal_pose'):
-    # def __init__(self, mode='stage0', datapath='/root/code/seqs/gazehoi_list_train_0303.txt', split='train',hint_type='goal_pose'):
+    # def __init__(self, mode='stage0', datapath='/root/code/seqs/gazehoi_list_train_0718_new.txt', split='train',hint_type='goal_pose'):
+    def __init__(self, mode='stage0', datapath='/root/code/seqs/gazehoi_list_train_0303.txt', split='train',hint_type='goal_pose'):
         # super().__init__()
         if split == 'test':
             # datapath = '/root/code/seqs/gazehoi_list_test_0303.txt'
@@ -827,12 +736,12 @@ class GazeHOIDataset_stage0_1obj(data.Dataset):
         for info in info_list:
             seq = info.strip()
             self.seqs.append(seq)
-        self.obj_global_mean = np.load('dataset/gazehoi_global_obj_mean.npy')
-        self.obj_global_std = np.load('dataset/gazehoi_global_obj_std.npy')
-        self.obj_local_mean = np.load('dataset/gazehoi_local_obj_mean.npy')
-        self.obj_local_std = np.load('dataset/gazehoi_local_obj_std.npy')
+        self.obj_global_mean = np.load('/root/code/gazehoi-diffusion/dataset/gazehoi_global_obj_mean.npy')
+        self.obj_global_std = np.load('/root/code/gazehoi-diffusion/dataset/gazehoi_global_obj_std.npy')
+        self.obj_local_mean = np.load('/root/code/gazehoi-diffusion/dataset/gazehoi_local_obj_mean.npy')
+        self.obj_local_std = np.load('/root/code/gazehoi-diffusion/dataset/gazehoi_local_obj_std.npy')
         self.hint_type = hint_type
-        self.table_plane = read_xyz("dataset/table_plane_750.xyz")
+        self.table_plane = read_xyz("/root/code/gazehoi-diffusion/dataset/table_plane_750.xyz")
         self.datalist = []
         self.fps = 6
         self.target_length = 150
@@ -1041,104 +950,6 @@ class GazeHOIDataset_eval(data.Dataset):
         obj_pose = obj_pose.reshape(-1,12)
         hand_params = hand_params.reshape(-1,42*3)
         return  obj_pose,gaze, obj_verts,hand_params,num_frames,seq
-
-
-class GazeHOIDataset_stage0_norm(data.Dataset):
-    def __init__(self, mode='stage0', datapath='/root/code/seqs/gazehoi_list_train_0718.txt', split='train',hint_type='goal_pose'):
-        # super().__init__()
-        if split == 'test':
-            datapath = '/root/code/seqs/gazehoi_list_test_0718.txt'
-        print(datapath)
-        self.root = '/root/code/seqs/0303_data/'
-        self.obj_path = '/root/code/seqs/object/'
-        with open(datapath,'r') as f:
-            info_list = f.readlines()
-        self.seqs = []
-        for info in info_list:
-            seq = info.strip()
-            self.seqs.append(seq)
-        self.obj_global_mean = np.load('dataset/gazehoi_global_obj_mean.npy')
-        self.obj_global_std = np.load('dataset/gazehoi_global_obj_std.npy')
-        self.obj_local_mean = np.load('dataset/gazehoi_local_obj_mean.npy')
-        self.obj_local_std = np.load('dataset/gazehoi_local_obj_std.npy')
-        self.hint_type = hint_type
-        self.table_plane = read_xyz("dataset/table_plane_750.xyz")
-        self.datalist = []
-        self.fps = 6
-        self.target_length = 150
-        for seq in self.seqs:
-            seq_path = join(self.root,seq)
-            meta_path = join(seq_path,'meta.pkl')
-            mano_right_path = join(seq_path, 'mano/poses_right.npy')
-            gaze_path = join(seq_path,'gaze.npy')
-            gaze = np.load(gaze_path).reshape(-1,6) # (num_frames, 3)
-            num_frames = gaze.shape[0]
-            with open(meta_path,'rb')as f:
-                meta = pickle.load(f)
-                active_obj = meta['active_obj']
-                active_obj = meta['active_obj']
-            goal_index = meta['goal_index']
-            active_obj = meta['active_obj']
-            goal_index = meta['goal_index']
-
-            obj_name_list = meta['obj_name_list']
-            obj_verts = np.load(join(self.obj_path,active_obj,'resampled_500_trans.npy'))
-            obj_pose = np.load(join(seq_path,active_obj+'_pose_trans.npy')).reshape(-1,3,4)
-
-            new_verts = obj_verts @ obj_pose[0,:3,:3].T + obj_pose[0,:3,3].reshape(1,3)
-
-            seq_len = obj_pose.shape[0]
-            if seq_len >= self.target_length:
-                indices = torch.linspace(0, seq_len - 1, steps=self.target_length).long()
-                obj_pose = obj_pose[indices]
-                gaze = gaze[indices]
-                
-            step = int(30/self.fps)
-            for i in range(step):
-                gaze_ = gaze[i::step]
-                num_frames_ = gaze_.shape[0]
-                goal_index_ = 0
-                obj_pose_ = obj_pose[i::step]
-                data = {"gaze":gaze_, #x
-                        "obj_pose":obj_pose_, #x
-                        "obj_verts": new_verts,
-                        "seq":seq,
-                        "active_obj":active_obj,
-                        "num_frames":num_frames_,#x
-                        "goal_index":goal_index_}#x
-                
-                self.datalist.append(data)
-                if split == 'test':
-                    break
-    
-    def __len__(self):
-        return len(self.datalist)
-
-    def __getitem__(self, index):
-        data = self.datalist[index]
-        flag = np.zeros(4)
-        length = 30
-        num_frames = data['num_frames']
-        goal_index = data['goal_index']
-        seq = data['seq']
-        obj_pose = data['obj_pose']
-        obj_verts = data['obj_verts']
-        gaze = data['gaze']
-        if num_frames < length:
-            # 在后边补充
-            pad_width = ((0,length-num_frames), (0, 0))  # 在第一维度上填充0行，使总行数变为10
-            obj_pose = np.pad(obj_pose.reshape(-1,12), pad_width, mode='edge').reshape(-1,3,4)
-            gaze = np.pad(gaze.reshape(-1,6), pad_width, mode='edge')
-
-        obj_pose = torch.tensor(obj_pose)
-        obj_pose_global_6d = obj_matrix2rot6d(obj_pose.unsqueeze(0)).squeeze(0).numpy()
-
-        obj_pose_global_6d = (obj_pose_global_6d - self.obj_global_mean) / self.obj_global_std
-
-        # print(obj_pose_global_6d.shape)
-        hint = obj_pose_global_6d
-        return  obj_pose_global_6d, hint,gaze, obj_verts,flag, num_frames,seq
-
 
 
 

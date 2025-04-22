@@ -4,12 +4,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import clip
-# from model.rotation2xyz import Rotation2xyz
-from model.base_cross_model import PerceiveEncoder
-from model.base_cross_model import *
-from model.pointnet_plus2 import *
+from model.rotation2xyz import Rotation2xyz
 
-class MDM_Flow_Gaze(nn.Module):
+
+class MDM_Flow(nn.Module):
     def __init__(
         self,
         modeltype,
@@ -39,7 +37,6 @@ class MDM_Flow_Gaze(nn.Module):
         **kargs
     ):
         super().__init__()
-        self.length = 30
 
         self.legacy = legacy
         self.modeltype = modeltype
@@ -95,43 +92,57 @@ class MDM_Flow_Gaze(nn.Module):
             self.seqTransEncoder = nn.TransformerEncoder(
                 seqTransEncoderLayer, num_layers=self.num_layers
             )
+        elif self.arch == "trans_dec":
+            print("TRANS_DEC init")
+            seqTransDecoderLayer = nn.TransformerDecoderLayer(
+                d_model=self.latent_dim,
+                nhead=self.num_heads,
+                dim_feedforward=self.ff_size,
+                dropout=self.dropout,
+                activation=activation,
+            )
+            self.seqTransDecoder = nn.TransformerDecoder(
+                seqTransDecoderLayer, num_layers=self.num_layers
+            )
+        elif self.arch == "gru":
+            print("GRU init")
+            self.gru = nn.GRU(
+                self.latent_dim,
+                self.latent_dim,
+                num_layers=self.num_layers,
+                batch_first=True,
+            )
+        else:
+            raise ValueError(
+                "Please choose correct architecture [trans_enc, trans_dec, gru]"
+            )
 
         self.embed_timestep = TimestepEmbedder(
             self.latent_dim, self.sequence_pos_encoder
         )
-        
-        if  self.dataset == 'gazehoi_stage0_1obj':
-            self.encode_obj_pose = nn.Linear(9,self.latent_dim)
-            
-            self.encode_obj_mesh = PointNet2SemSegSSGShape({'feat_dim': self.latent_dim})
-            self.fp_layer = MyFPModule()
-            self.gaze_linear = nn.Linear(self.latent_dim, self.latent_dim)  
-            self.encode_gaze = PerceiveEncoder(n_input_channels=self.latent_dim,
-                                            n_latent=self.length,
-                                            n_latent_channels=self.latent_dim,
-                                            n_self_att_heads=4,
-                                            n_self_att_layers=3,
-                                            dropout=0.1)
-        elif self.dataset == 'gazehoi_o2h_mid':
-            self.encode_obj_pose = nn.Linear(12,self.latent_dim)
-            
-            self.encode_obj_mesh = PointNet2SemSegSSGShape({'feat_dim': self.latent_dim})
-            self.encode_obj = PerceiveEncoder(n_input_channels=self.latent_dim,
-                                            n_latent=self.length,
-                                            n_latent_channels=self.latent_dim,
-                                            n_self_att_heads=4,
-                                            n_self_att_layers=3,
-                                            dropout=0.1)
-            self.encode_hand_pose = nn.Sequential(nn.Linear(291,128), nn.ELU(),
-                                                nn.Linear(128,self.latent_dim) )
+        self.text_embedding_type = text_embed
 
-
-
+        if self.cond_mode != "no_cond":
+            if "text" in self.cond_mode:
+                if text_embed == "clip":
+                    print("EMBED TEXT flow,Loading CLIP flow ...")
+                    self.clip_model = self.load_and_freeze_clip(clip_version)
+                    self.embed_text = nn.Linear(self.clip_dim, self.latent_dim)
+                elif text_embed == "t5-large":
+                    print("EMBED TEXT flow,Loading T5-large flow ...")
+                    self.tokenizer_t5, self.clip_model = self.load_t5()
+                    self.embed_text = nn.Linear(1024, self.latent_dim)
+                else:
+                    raise NotImplementedError
+            if "action" in self.cond_mode:
+                self.embed_action = EmbedAction(self.num_actions, self.latent_dim)
+                print("EMBED ACTION")
 
         self.output_process = OutputProcess(
             self.data_rep, self.input_feats, self.latent_dim, self.njoints, self.nfeats
         )
 
+        self.rot2xyz = Rotation2xyz(device="cpu", dataset=self.dataset)
 
     def parameters_wo_clip(self):
         return [
@@ -154,6 +165,27 @@ class MDM_Flow_Gaze(nn.Module):
             p.requires_grad = False
 
         return clip_model
+
+    def load_t5(
+        self,
+        t5_name="t5-large",
+    ):  # https://discuss.huggingface.co/t/how-to-use-t5-for-sentence-embedding/1097
+        # CLIP file size, 338MB
+        # "t5-small" file size, 242MB, dim 512
+        # "t5-base" file size, 1.1GB
+        # "t5-large" file size, 2.95GB, dim 1024
+        # "t5-3b" file size, 11GB
+        # "t5-11b" file size, 42GB
+        from transformers import T5Tokenizer, T5ForConditionalGeneration
+
+        tokenizer = T5Tokenizer.from_pretrained(t5_name)
+        model = T5ForConditionalGeneration.from_pretrained(t5_name)
+        # Freeze CLIP weights
+        model.eval()
+        for p in model.parameters():
+            p.requires_grad = False
+
+        return tokenizer, model
 
     def mask_cond(self, cond, force_mask=False):
         bs = len(cond)
@@ -183,6 +215,66 @@ class MDM_Flow_Gaze(nn.Module):
         else:
             return cond
 
+    def encode_text_clip(self, raw_text, default_context_length=77):
+        # raw_text - list (batch_size length) of strings with input text prompts
+        device = next(self.parameters()).device
+        max_text_len = (
+            20 if self.dataset in ["humanml", "kit"] else None
+        )  # Specific hardcoding for humanml dataset
+        if max_text_len is not None:
+            context_length = max_text_len + 2  # start_token + 20 + end_token
+            assert context_length < default_context_length
+            texts = clip.tokenize(
+                raw_text, context_length=context_length, truncate=True
+            ).to(
+                device
+            )  # [bs, 22] # if n_tokens > context_length -> will truncate
+            # print('texts', texts.shape)
+            zero_pad = torch.zeros(
+                [len(texts), default_context_length - context_length],
+                dtype=texts.dtype,
+                device=texts.device,
+            )
+            texts = torch.cat([texts, zero_pad], dim=1)
+            # print('texts after pad', texts.shape, texts)
+        else:
+            texts = clip.tokenize(raw_text, truncate=True).to(
+                device
+            )  # [bs, context_length] # if n_tokens > 77 -> will truncate
+        return self.clip_model.encode_text(texts).float()
+
+    def encode_text_t5(self, raw_text, max_length=30, max_source_length=512):
+        tokenized = self.tokenizer_t5(
+            raw_text,
+            padding="max_length",
+            max_length=max_length,
+            # padding="longest",
+            # max_length=max_source_length,
+            truncation=True,
+            return_tensors="pt",
+        )
+        # forward pass through encoder only
+        output = self.clip_model.encoder(
+            input_ids=tokenized["input_ids"].to(self.device),
+            attention_mask=tokenized["attention_mask"].to(self.device),
+            return_dict=True,
+        )
+        # get the final hidden states
+        emb = (
+            output.last_hidden_state
+        )  # The shape of emb will be (batch_size, seq_len, hidden_size)
+        # emb = emb.mean(dim=1).float()  # [bs, d]
+        emb = emb.float()
+        return emb
+
+    def encode_text(self, raw_text):
+        if self.text_embedding_type == "clip":
+            return self.encode_text_clip(raw_text)
+        elif self.text_embedding_type == "t5-large":
+            return self.encode_text_t5(raw_text)
+        else:
+            raise NotImplementedError
+
     def forward(self, x, timesteps, y=None):
         """
         x: [batch_size, njoints, nfeats, max_frames], denoted x_t in the paper
@@ -195,42 +287,40 @@ class MDM_Flow_Gaze(nn.Module):
         emb_dim = 1
 
         force_mask = y.get("uncond", False)
-        
+        if "text" in self.cond_mode:
+            if self.text_embedding_type == "clip":
+                enc_text = self.encode_text(y["text"])
+                emb += self.embed_text(self.mask_cond(enc_text, force_mask=force_mask))
+
+            elif self.text_embedding_type == "t5-large":
+                enc_text = self.encode_text(y["text"])
+                enc_text = self.embed_text(
+                    self.mask_cond_3d(enc_text, force_mask=force_mask)
+                )
+                enc_text = rearrange(enc_text, "b t c -> t b c")
+                emb = torch.cat((emb, enc_text), axis=0)
+                emb_dim += 30  # hardcoded for t5,max_length=30
+            else:
+                raise NotImplementedError
+        elif "action" in self.cond_mode:
+            action_emb = self.embed_action(y["action"])
+            emb += self.mask_cond(action_emb, force_mask=force_mask)
+
+        else:
+            pass  # no cond
+
+        if self.arch == "gru":
+            x_reshaped = x.reshape(bs, njoints * nfeats, 1, nframes)
+            emb_gru = emb.repeat(nframes, 1, 1)  # [#frames, bs, d]
+            emb_gru = emb_gru.permute(1, 2, 0)  # [bs, d, #frames]
+            emb_gru = emb_gru.reshape(
+                bs, self.latent_dim, 1, nframes
+            )  # [bs, d, 1, #frames]
+            x = torch.cat(
+                (x_reshaped, emb_gru), axis=1
+            )  # [bs, d+joints*feat, 1, #frames]
+
         x = self.input_process(x)
-        if self.dataset == 'gazehoi_stage0_1obj':
-            """
-            提取物体pose和shape特征
-            """
-            bs, nf, _ = y['gaze'].shape
-            init_obj_pose = y['hint'][:,0]
-            obj_pose_emb = self.encode_obj_pose(init_obj_pose).unsqueeze(0)
-            points = y['obj_points']
-            table = points[:,500:]
-            points_feat, global_obj_feat= self.encode_obj_mesh(points.repeat(1, 1, 2))
-            gaze = y['gaze']
-            gaze_emb = self.fp_layer(gaze, points, points_feat).permute((0, 2, 1))
-            gaze_feat = self.gaze_linear(gaze_emb)
-            gaze_feat = self.encode_gaze(gaze_feat)
-            # print(x.shape,obj_pose_emb.shape, global_obj_feat.shape, gaze_feat.shape)
-            x = x + obj_pose_emb + global_obj_feat + gaze_feat.permute(1,0,2).contiguous()
-        elif self.dataset == 'gazehoi_o2h_mid':
-            """
-            提取物体pose和shape特征
-            """
-            bs, nf, _ = y['obj_pose'].shape
-            obj_pose = y['obj_pose']
-            # print(obj_pose.shape)
-            obj_pose_emb = self.encode_obj_pose(obj_pose) #[bs,30,256]
-
-            points = y['obj_points']
-            points_feat, global_obj_feat= self.encode_obj_mesh(points.repeat(1, 1, 2))
-
-            obj_feat = self.encode_obj(obj_pose_emb)  #[bs,30,256]
-
-            init_hand_emb = self.encode_hand_pose(y['init_hand_pose']) #b,D
-
-            x = x  + global_obj_feat + obj_feat.permute(1,0,2).contiguous() + init_hand_emb 
-        
 
         if self.arch == "trans_enc":
             # adding the timestep embed
@@ -241,17 +331,35 @@ class MDM_Flow_Gaze(nn.Module):
             assert len(output) == x_len_old  # 196=165+31
             # , src_key_padding_mask=~maskseq)  # [seqlen, bs, d]
 
+        elif self.arch == "trans_dec":
+            if self.emb_trans_dec:
+                xseq = torch.cat((emb, x), axis=0)
+            else:
+                xseq = x
+            xseq = self.sequence_pos_encoder(xseq)  # [seqlen+1, bs, d]
+            if self.emb_trans_dec:
+                output = self.seqTransDecoder(tgt=xseq, memory=emb)[1:]
+                # [seqlen, bs, d] # FIXME - maybe add a causal mask
+            else:
+                output = self.seqTransDecoder(tgt=xseq, memory=emb)
+
+        elif self.arch == "gru":
+            xseq = x
+            xseq = self.sequence_pos_encoder(xseq)  # [seqlen, bs, d]
+            output, _ = self.gru(xseq)
+        else:
+            raise ValueError
 
         output = self.output_process(output)  # [bs, njoints, nfeats, nframes]
         return output
 
-    # def _apply(self, fn):
-    #     super()._apply(fn)
-        # self.rot2xyz.smpl_model._apply(fn)
+    def _apply(self, fn):
+        super()._apply(fn)
+        self.rot2xyz.smpl_model._apply(fn)
 
-    # def train(self, *args, **kwargs):
-    #     super().train(*args, **kwargs)
-    #     self.rot2xyz.smpl_model.train(*args, **kwargs)
+    def train(self, *args, **kwargs):
+        super().train(*args, **kwargs)
+        self.rot2xyz.smpl_model.train(*args, **kwargs)
 
 
 class PositionalEncoding(nn.Module):
@@ -303,15 +411,25 @@ class InputProcess(nn.Module):
         self.input_feats = input_feats
         self.latent_dim = latent_dim
         self.poseEmbedding = nn.Linear(self.input_feats, self.latent_dim)
+        if self.data_rep == "rot_vel":
+            self.velEmbedding = nn.Linear(self.input_feats, self.latent_dim)
 
     def forward(self, x):
         # bs, njoints, nfeats, nframes = x.shape
         # x = x.permute((3, 0, 1, 2)).reshape(nframes, bs, njoints * nfeats)
         x = rearrange(x, "b j f t -> t b (j f)")
 
-        x = self.poseEmbedding(x)  # [seqlen, bs, d]
-        return x
-
+        if self.data_rep in ["rot6d", "xyz", "hml_vec"]:
+            x = self.poseEmbedding(x)  # [seqlen, bs, d]
+            return x
+        elif self.data_rep == "rot_vel":
+            first_pose = x[[0]]  # [1, bs, 150]
+            first_pose = self.poseEmbedding(first_pose)  # [1, bs, d]
+            vel = x[1:]  # [seqlen-1, bs, 150]
+            vel = self.velEmbedding(vel)  # [seqlen-1, bs, d]
+            return torch.cat((first_pose, vel), axis=0)  # [seqlen, bs, d]
+        else:
+            raise ValueError
 
 
 class OutputProcess(nn.Module):
@@ -328,8 +446,16 @@ class OutputProcess(nn.Module):
 
     def forward(self, output):
         nframes, bs, d = output.shape
-        output = self.poseFinal(output)  # [seqlen, bs, 150]
-      
+        if self.data_rep in ["rot6d", "xyz", "hml_vec"]:
+            output = self.poseFinal(output)  # [seqlen, bs, 150]
+        elif self.data_rep == "rot_vel":
+            first_pose = output[[0]]  # [1, bs, d]
+            first_pose = self.poseFinal(first_pose)  # [1, bs, 150]
+            vel = output[1:]  # [seqlen-1, bs, d]
+            vel = self.velFinal(vel)  # [seqlen-1, bs, 150]
+            output = torch.cat((first_pose, vel), axis=0)  # [seqlen, bs, 150]
+        else:
+            raise ValueError
         output = output.reshape(nframes, bs, self.njoints, self.nfeats)
         output = output.permute(1, 2, 3, 0)  # [bs, njoints, nfeats, nframes]
         return output

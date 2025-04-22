@@ -1,0 +1,30 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+      {
+        "name": "Train MFM Single GPU",
+        "type": "python",
+        "request": "launch",
+        "program": "${workspaceFolder}/train.py",
+        "console": "integratedTerminal",
+        "env": {
+          "CUDA_VISIBLE_DEVICES": "0"
+        },
+        "args": [
+          "name=test",
+          "dataset=gazehoi_o2h_mid",
+          "training.eval_during_training=0",
+          "model.cond_mask_prob=0.1",
+          "guidance_param=2.5",
+          "training.overwrite=1",
+          "training.log_interval=1000",
+          "batch_size=32",
+          "training.num_steps=600000",
+          "num_workers=4",
+          "input_text=./assets/example_text_prompts.txt",
+          "is_debug=0"
+        ]
+      }
+    ]
+  }
+  

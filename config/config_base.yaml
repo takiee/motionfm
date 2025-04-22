@@ -13,6 +13,7 @@ num_classes: null
 nfeats: null
 njoint: null
 
+
 #base
 num_seeds: 2
 cuda: true
@@ -25,6 +26,10 @@ is_vis: true # do vis
 #data
 dataset: humanact12 #'humanml', 'kit', 'humanact12', 'uestc'
 num_workers: 4
+
+# model
+# layers: 8
+
 
 dynamic: flow #diffusion, flow
 #diffusion

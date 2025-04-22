@@ -1,53 +1,56 @@
 from torch.utils.data import DataLoader
-from data_loaders.tensors import collate as all_collate
-from data_loaders.tensors import t2m_collate
+from data_loaders.tensors import *
+from .gazehoi.data.dataset import *
 
 
 def get_dataset_class(name):
-    if name == "amass":
-        from .amass import AMASS
+    # if name == "amass":
+    #     from .amass import AMASS
 
-        return AMASS
-    elif name == "uestc":
-        from .a2m.uestc import UESTC
+    #     return AMASS
+    # elif name == "uestc":
+    #     from .a2m.uestc import UESTC
 
-        return UESTC
-    elif name == "humanact12":
-        from .a2m.humanact12poses import HumanAct12Poses
+    #     return UESTC
+    # elif name == "humanact12":
+    #     from .a2m.humanact12poses import HumanAct12Poses
 
-        return HumanAct12Poses
-    elif name == "humanml":
-        from data_loaders.humanml.data.dataset import HumanML3D
+    #     return HumanAct12Poses
+    # elif name == "humanml":
+    #     from data_loaders.humanml.data.dataset import HumanML3D
 
-        return HumanML3D
-    elif name == "kit":
-        from data_loaders.humanml.data.dataset import KIT
+    #     return HumanML3D
+    # elif name == "kit":
+    #     from data_loaders.humanml.data.dataset import KIT
 
-        return KIT
+    #     return KIT
+    if name == 'gazehoi_stage0_1obj':
+        return GazeHOIDataset_stage0_1obj
+    elif name == 'gazehoi_o2h_mid':
+        return GazeHOIDataset_o2h_mid
     else:
         raise ValueError(f"Unsupported dataset name [{name}]")
 
 
-def get_collate_fn(name, hml_mode="train"):
-    if hml_mode == "gt":
-        from data_loaders.humanml.data.dataset import collate_fn as t2m_eval_collate
+def get_collate_fn(name, hml_mode='train'):
 
-        return t2m_eval_collate
-
-    if name in ["humanml", "kit"]:
-        return t2m_collate
+    if name == 'gazehoi_stage0_1obj' or name == 'gazehoi_stage0_norm' or name == 'gazehoi_stage0_point' or name == 'gazehoi_stage0_noatt':
+        return g2m_stage0_1obj_collate
+    if name == 'gazehoi_o2h_mid' or name == 'gazehoi_o2h_mid_2hand_assemobj':
+        return o2h_mid_collate
     else:
         return all_collate
 
 
 def get_dataset(name, num_frames, split="train", hml_mode="train", is_debug=False):
     DATA = get_dataset_class(name)
-    if name in ["humanml", "kit"]:
-        dataset = DATA(
-            split=split, num_frames=num_frames, mode=hml_mode, is_debug=is_debug
-        )
-    else:
-        dataset = DATA(split=split, num_frames=num_frames, is_debug=is_debug)
+    # if name in ["humanml", "kit"]:
+    #     dataset = DATA(
+    #         split=split, num_frames=num_frames, mode=hml_mode, is_debug=is_debug
+    #     )
+    # else:
+    #     dataset = DATA(split=split, num_frames=num_frames, is_debug=is_debug)
+    dataset = DATA(split=split)
     return dataset
 
 

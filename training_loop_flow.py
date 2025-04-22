@@ -4,8 +4,8 @@ import os
 import time
 from types import SimpleNamespace
 
-import wandb
-import eval_humanml
+# import wandb
+# import eval_humanml
 
 
 from generate_utils import vis_during_train
@@ -21,7 +21,7 @@ from utils import dist_util
 from diffusion.fp16_util import MixedPrecisionTrainer
 from tqdm import tqdm
 
-from data_loaders.humanml.networks.evaluator_wrapper import EvaluatorMDMWrapper
+# from data_loaders.humanml.networks.evaluator_wrapper import EvaluatorMDMWrapper
 import eval_humanact12_uestc
 from data_loaders.get_data import get_dataset_loader
 
@@ -115,28 +115,29 @@ class TrainLoop_Flow:
                     scale=1.0,
                 )
             }
-
-        if torch.cuda.is_available():
-            self.use_ddp = True
-            print(dist_util.dev())
-            self.ddp_model = DDP(
-                self.model,
-                device_ids=[dist_util.dev()],
-                output_device=dist_util.dev(),
-                broadcast_buffers=False,
-                bucket_cap_mb=128,
-                find_unused_parameters=False,
-            )
-            print("DDP is used")
-        else:
-            raise RuntimeError("CUDA is not available!")
-            if dist.get_world_size() > 1:
-                logger.warn(
-                    "Distributed training requires CUDA. "
-                    "Gradients will not be synchronized properly!"
-                )
-            self.use_ddp = False
-            self.ddp_model = self.model
+        self.ddp_model = self.model
+        #! 先不用DDP
+        # if torch.cuda.is_available():
+        #     self.use_ddp = True
+        #     print(dist_util.dev())
+        #     self.ddp_model = DDP(
+        #         self.model,
+        #         device_ids=[dist_util.dev()],
+        #         output_device=dist_util.dev(),
+        #         broadcast_buffers=False,
+        #         bucket_cap_mb=128,
+        #         find_unused_parameters=False,
+        #     )
+        #     print("DDP is used")
+        # else:
+        #     raise RuntimeError("CUDA is not available!")
+        #     if dist.get_world_size() > 1:
+        #         logger.warn(
+        #             "Distributed training requires CUDA. "
+        #             "Gradients will not be synchronized properly!"
+        #         )
+        #     self.use_ddp = False
+        #     self.ddp_model = self.model
 
     def _load_and_sync_parameters(self):
         resume_checkpoint = find_resume_checkpoint() or self.resume_checkpoint
@@ -210,24 +211,24 @@ class TrainLoop_Flow:
                         iteration=self.step,
                         group_name="Curveness",
                     )
-                    if self.cfg.is_vis:
-                        out_path = os.path.join(self.cfg.output_dir, f"step{self.step}")
-                        os.makedirs(out_path, exist_ok=True)
-                        vis_during_train(
-                            model=self.model,
-                            dynamic=self.dynamic,
-                            cfg=self.cfg,
-                            out_path=out_path,
-                        )
+                    # if self.cfg.is_vis:
+                    #     out_path = os.path.join(self.cfg.output_dir, f"step{self.step}")
+                    #     os.makedirs(out_path, exist_ok=True)
+                    #     vis_during_train(
+                    #         model=self.model,
+                    #         dynamic=self.dynamic,
+                    #         cfg=self.cfg,
+                    #         out_path=out_path,
+                    #     )
 
-                        self.train_platform.report_video_list(
-                            name="generated_motions",
-                            mp4_root_path=out_path,
-                            iteration=self.step,
-                            group_name="generated",
-                        )
+                    #     self.train_platform.report_video_list(
+                    #         name="generated_motions",
+                    #         mp4_root_path=out_path,
+                    #         iteration=self.step,
+                    #         group_name="generated",
+                    #     )
 
-                    self.evaluate()
+                    # self.evaluate()
                     self.model.train()
 
                 self.step += 1
@@ -342,15 +343,33 @@ class TrainLoop_Flow:
             micro_cond = cond
             last_batch = (i + self.microbatch) >= len(batch)
             weights = 1.0
+            if self.dataset == 'gazehoi_stage0_1obj':
+                compute_losses = functools.partial(
+                    self.dynamic.training_losses_stage0_1obj,
+                    self.ddp_model,
+                    micro,  # [bs, ch, image_size, image_size]
+                    t=None,  # [bs](int) sampled timesteps
+                    model_kwargs=micro_cond,
+                    dataset=self.dataloader_train.dataset
+                )
+            elif self.dataset == 'gazehoi_o2h_mid':
+                compute_losses = functools.partial(
+                    self.dynamic.training_losses_o2h_mid,
+                    self.ddp_model,
+                    micro,  # [bs, ch, image_size, image_size]
+                    t=None,  # [bs](int) sampled timesteps
+                    model_kwargs=micro_cond,
+                    dataset=self.dataloader_train.dataset
+                )
 
-            compute_losses = functools.partial(
-                self.dynamic.training_losses,
-                self.ddp_model,
-                micro,
-                t=None,
-                model_kwargs=micro_cond,
-                dataset=self.dataloader_train.dataset,
-            )
+            # compute_losses = functools.partial(
+            #     self.dynamic.training_losses,
+            #     self.ddp_model,
+            #     micro,
+            #     t=None,
+            #     model_kwargs=micro_cond,
+            #     dataset=self.dataloader_train.dataset,
+            # )
 
             if last_batch or not self.use_ddp:
                 forward_dict = compute_losses()
@@ -366,7 +385,8 @@ class TrainLoop_Flow:
             data_range_dict["data_range_j0/data_min"] = micro[:, 0].min()
             data_range_dict["data_range_j0/data_max"] = micro[:, 0].max()
             if is_rank_zero():
-                wandb.log(data_range_dict, step=self.step)
+                # wandb.log(data_range_dict, step=self.step)
+                logger.info(f"[Step {self.step}] Data statistics: {data_range_dict}")
 
             log_loss_dict({k: v * weights for k, v in forward_dict.items()})
             self.mp_trainer.backward(loss)

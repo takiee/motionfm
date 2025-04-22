@@ -14,7 +14,7 @@ from data_loaders.humanml.scripts.motion_process import recover_from_ric
 import data_loaders.humanml.utils.paramUtil as paramUtil
 from data_loaders.humanml.utils.plot_script import plot_3d_motion
 import shutil
-from data_loaders.tensors import collate
+from data_loaders.tensors import *
 
 
 _FFMPEG_PATH = "ffmpeg"

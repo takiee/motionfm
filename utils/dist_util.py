@@ -13,43 +13,59 @@ import torch.distributed as dist
 
 # Change this to reflect your cluster layout.
 
-
-def setup_dist():
+def setup_dist(device=0):
     """
     Setup a distributed process group.
     """
+    global used_device
+    used_device = device
     if dist.is_initialized():
         return
 
-    backend = "gloo" if not th.cuda.is_available() else "nccl"
+# def setup_dist():
+#     """
+#     Setup a distributed process group.
+#     """
+#     if dist.is_initialized():
+#         return
 
-    if backend == "gloo":
-        hostname = "localhost"
-    else:
-        hostname = socket.gethostbyname(socket.getfqdn())
+#     backend = "gloo" if not th.cuda.is_available() else "nccl"
 
-    if os.environ.get("LOCAL_RANK") is None:
-        os.environ["MASTER_ADDR"] = hostname
-        os.environ["RANK"] = str(0)
-        os.environ["WORLD_SIZE"] = str(1)
-        port = _find_free_port()
-        os.environ["MASTER_PORT"] = str(port)
-        os.environ["LOCAL_RANK"] = str(0)
+#     if backend == "gloo":
+#         hostname = "localhost"
+#     else:
+#         hostname = socket.gethostbyname(socket.getfqdn())
 
-    dist.init_process_group(backend=backend, init_method="env://")
+#     if os.environ.get("LOCAL_RANK") is None:
+#         os.environ["MASTER_ADDR"] = hostname
+#         os.environ["RANK"] = str(0)
+#         os.environ["WORLD_SIZE"] = str(1)
+#         port = _find_free_port()
+#         os.environ["MASTER_PORT"] = str(port)
+#         os.environ["LOCAL_RANK"] = str(0)
 
-    if th.cuda.is_available():  # This clears remaining caches in GPU 0
-        th.cuda.set_device(dev())
-        th.cuda.empty_cache()
+#     dist.init_process_group(backend=backend, init_method="env://")
 
+#     if th.cuda.is_available():  # This clears remaining caches in GPU 0
+#         th.cuda.set_device(dev())
+#         th.cuda.empty_cache()
 
 def dev():
     """
     Get the device to use for torch.distributed.
     """
-    if th.cuda.is_available():
-        return th.device(f"cuda:{os.environ['LOCAL_RANK']}")
+    global used_device
+    if th.cuda.is_available() and used_device>=0:
+        return th.device(f"cuda:{used_device}")
     return th.device("cpu")
+
+# def dev():
+#     """
+#     Get the device to use for torch.distributed.
+#     """
+#     if th.cuda.is_available():
+#         return th.device(f"cuda:{os.environ['LOCAL_RANK']}")
+#     return th.device("cpu")
 
 
 def load_state_dict(path, **kwargs):

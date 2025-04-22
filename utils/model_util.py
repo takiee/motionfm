@@ -2,7 +2,7 @@ from flow.flow_matching_class import FlowMatching
 from model.mdm import MDM
 from diffusion import gaussian_diffusion as gd
 from diffusion.respace import SpacedDiffusion, space_timesteps
-from model.mdm_flow import MDM_Flow
+from model.mdm_flow import MDM_Flow_Gaze
 
 
 def load_model_wo_clip(model, state_dict):
@@ -20,7 +20,7 @@ def create_model_and_diffusion(cfg, data):
 
 def create_model_and_flow(cfg, data):
     print("creating model and flow...")
-    model = MDM_Flow(**get_model_args(cfg, data))
+    model = MDM_Flow_Gaze(**get_model_args(cfg, data))
     dynamic = create_flow(cfg)
 
     if False:
@@ -44,54 +44,115 @@ def get_cond_mode(cfg):
     return cond_mode
 
 
-def get_model_args(cfg, data, clip_version="ViT-B/32", action_emb="tensor"):
-    cond_mode = get_cond_mode(cfg)
-    if hasattr(data.dataset, "num_actions"):
+# def get_model_args(cfg, data, clip_version="ViT-B/32", action_emb="tensor"):
+#     cond_mode = get_cond_mode(cfg)
+#     if hasattr(data.dataset, "num_actions"):
+#         num_actions = data.dataset.num_actions
+#     else:
+#         num_actions = 1
+
+#     assert cfg.model.text_emebed in ["clip", "t5-large"]
+
+#     if cfg.dataset == "humanml":
+#         data_rep = "hml_vec"
+#         njoints = 263
+#         nfeats = 1
+#     elif cfg.dataset == "kit":
+#         data_rep = "hml_vec"
+#         njoints = 251
+#         nfeats = 1
+#     else:
+#         # SMPL defaults
+#         data_rep = "rot6d"
+#         njoints = 25
+#         nfeats = 6
+
+#     return {
+#         "modeltype": "",
+#         "njoints": njoints,
+#         "nfeats": nfeats,
+#         "num_actions": num_actions,
+#         "translation": True,
+#         "pose_rep": "rot6d",
+#         "glob": True,
+#         "glob_rot": True,
+#         "latent_dim": cfg.model.latent_dim,
+#         "ff_size": cfg.model.ff_size,
+#         "num_layers": cfg.model.layers,
+#         "num_heads": cfg.model.num_heads,
+#         "dropout": 0.1,
+#         "activation": "gelu",
+#         "data_rep": data_rep,
+#         "cond_mode": cond_mode,
+#         "cond_mask_prob": cfg.model.cond_mask_prob,
+#         "action_emb": action_emb,
+#         "arch": cfg.model.arch,
+#         "emb_trans_dec": cfg.model.emb_trans_dec,
+#         "clip_version": clip_version,
+#         "text_embed": cfg.model.text_emebed,
+#         "dataset": cfg.dataset,
+#     }
+
+
+def get_model_args(cfg, data):
+
+    # default args
+    clip_version = 'ViT-B/32'
+    action_emb = 'tensor'
+    if hasattr(data.dataset, 'num_actions'):
         num_actions = data.dataset.num_actions
     else:
         num_actions = 1
 
-    assert cfg.model.text_emebed in ["clip", "t5-large"]
+    # SMPL defaults
+    data_rep = 'rot6d'
+    njoints = 25
+    nfeats = 6
 
-    if cfg.dataset == "humanml":
-        data_rep = "hml_vec"
-        njoints = 263
+    if cfg.dataset == 'gazehoi_stage0_1obj' or cfg.dataset == 'gazehoi_stage0_norm' or cfg.dataset == 'gazehoi_stage0_point'  or cfg.dataset == 'gazehoi_stage0_noatt':
+        # print('gazehoi!!')
+        data_rep = 'rot6d'
+        # njoints = 51
+        njoints = 9
         nfeats = 1
-    elif cfg.dataset == "kit":
-        data_rep = "hml_vec"
-        njoints = 251
+        latent_dim = 128
+        length = 30 # TODO: length
+        hint_dim = 9 # 4*9
+    elif cfg.dataset == 'gazehoi_g2ho':
+        print('gazehoi__g2ho!!')
+        data_rep = 'rot6d'
+        # njoints = 51
+        njoints = 102+12
         nfeats = 1
-    else:
-        # SMPL defaults
-        data_rep = "rot6d"
-        njoints = 25
-        nfeats = 6
+        latent_dim = 256
+        length = 30
+        hint_dim = None
 
-    return {
-        "modeltype": "",
-        "njoints": njoints,
-        "nfeats": nfeats,
-        "num_actions": num_actions,
-        "translation": True,
-        "pose_rep": "rot6d",
-        "glob": True,
-        "glob_rot": True,
-        "latent_dim": cfg.model.latent_dim,
-        "ff_size": cfg.model.ff_size,
-        "num_layers": cfg.model.layers,
-        "num_heads": cfg.model.num_heads,
-        "dropout": 0.1,
-        "activation": "gelu",
-        "data_rep": data_rep,
-        "cond_mode": cond_mode,
-        "cond_mask_prob": cfg.model.cond_mask_prob,
-        "action_emb": action_emb,
-        "arch": cfg.model.arch,
-        "emb_trans_dec": cfg.model.emb_trans_dec,
-        "clip_version": clip_version,
-        "text_embed": cfg.model.text_emebed,
-        "dataset": cfg.dataset,
-    }
+    elif cfg.dataset == 'gazehoi_o2h_mid':
+        print('gazehoi__o2h_mid!!')
+        data_rep = 'mid'
+        # njoints = 51
+        njoints = 291
+        nfeats = 1
+        latent_dim = 256
+        length = 30
+        hint_dim = None
+    elif cfg.dataset == 'gazehoi_o2h_mid_2hand_assemobj':
+        print('gazehoi_o2h_mid_2hand_assemobj!!')
+        data_rep = 'mid'
+        # njoints = 51
+        njoints = 726+63 #TODO: fix dim
+        nfeats = 1
+        latent_dim = 256
+        length = 30
+        hint_dim = None
+
+    return {'modeltype': '', 'njoints': njoints, 'nfeats': nfeats, 'num_actions': num_actions,
+            'translation': True, 'pose_rep': 'rot6d', 'glob': True, 'glob_rot': True,
+            'latent_dim': latent_dim, 'ff_size': 1024, 'num_layers': cfg.model.layers, 'num_heads': 4,
+            'dropout': 0.1, 'activation': "gelu", 'data_rep': data_rep, 'cond_mode': '',
+            'cond_mask_prob': cfg.model.cond_mask_prob, 'action_emb': action_emb, 'dataset': cfg.dataset,'hint_dim':hint_dim,'length':length}
+
 
 
 def create_gaussian_diffusion(cfg):
@@ -133,8 +194,4 @@ def create_gaussian_diffusion(cfg):
 
 
 def create_flow(args):
-    return FlowMatching(
-        lambda_vel=args.model.lambda_vel,
-        lambda_rcxyz=args.model.lambda_rcxyz,
-        lambda_fc=args.model.lambda_fc,
-    )
+    return FlowMatching(args)

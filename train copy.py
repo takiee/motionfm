@@ -10,7 +10,10 @@ from training_loop_difusion import TrainLoop_Diffusion
 from training_loop_flow import TrainLoop_Flow
 from data_loaders.get_data import get_dataset_loader
 from utils.model_util import create_model_and_diffusion, create_model_and_flow
-from train_platforms import *  # required for the eval operation
+from train_platforms import (
+    ClearmlPlatform,
+    Wandb_ClearML_Platform,
+)  # required for the eval operation
 import hydra
 import torch
 
@@ -34,16 +37,13 @@ def main(cfg):
         cfg.training.eval_during_training = True
         print("is_debug: ", cfg.is_debug)
     else:
-        cfg.dynamic = "flow"
         print("is_debug: ", cfg.is_debug)
 
     os.makedirs(cfg.training.save_dir, exist_ok=True)
 
     fixseed(cfg.seed)
-    dist_util.setup_dist(cfg.device)
-    #! wandb需要花钱
-    # train_platform = Wandb_ClearML_Platform(cfg.training.save_dir, cfg.wandb, cfg=cfg)
-    train_platform = TensorboardPlatform(cfg.training.save_dir)
+    dist_util.setup_dist()
+    train_platform = Wandb_ClearML_Platform(cfg.training.save_dir, cfg.wandb, cfg=cfg)
     train_platform.report_args(cfg, name="Args")
 
     if cfg.training.save_dir is None:
@@ -64,12 +64,14 @@ def main(cfg):
         is_debug=cfg.is_debug,
     )
 
-    if cfg.dynamic == "flow":
+    if cfg.dynamic == "diffusion":
+        model, dynamic = create_model_and_diffusion(cfg, data_loader)
+    elif cfg.dynamic == "flow":
         model, dynamic = create_model_and_flow(cfg, data_loader)
     else:
         raise NotImplementedError
     model.to(dist_util.dev())
-    # model.rot2xyz.smpl_model.eval()
+    model.rot2xyz.smpl_model.eval()
     print(
         "Total params: %.2fM"
         % (sum(p.numel() for p in model.parameters_wo_clip()) / 1000000.0)
@@ -79,7 +81,11 @@ def main(cfg):
     data_shape = next(iter(data_loader))[0].shape
 
     fixed_noise = torch.randn(data_shape).to('cuda') #torch.randn([128, *data_shape[1:]])
-    if cfg.dynamic == "flow":
+    if cfg.dynamic == "diffusion":
+        TrainLoop_Diffusion(
+            cfg, train_platform, model, dynamic, data_loader, fixed_noise
+        ).run_loop()
+    elif cfg.dynamic == "flow":
         TrainLoop_Flow(
             cfg, train_platform, model, dynamic, data_loader, fixed_noise
         ).run_loop()

@@ -19,7 +19,7 @@ from data_loaders.humanml.scripts import motion_process
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+from utils.data_util import *
 # from zuko.utils import odeint
 from torchdiffeq import odeint_adjoint as odeint
 import wandb
@@ -39,7 +39,7 @@ class FlowMatching:
 
     def __init__(
         self,
-        *,
+        args,
         lambda_rcxyz=0.0,
         lambda_vel=0.0,
         data_rep="rot6d",
@@ -48,16 +48,19 @@ class FlowMatching:
         lambda_fc=0.0,
     ):
         self.data_rep = data_rep
-        self.lambda_rcxyz = lambda_rcxyz
-        self.lambda_vel = lambda_vel
-        self.lambda_root_vel = lambda_root_vel
-        self.lambda_vel_rcxyz = lambda_vel_rcxyz
-        self.lambda_fc = lambda_fc
+        self.dataset = args.dataset
+        if  self.dataset == 'gazehoi_stage0_1obj':
+            self.obj_global_mean = torch.from_numpy(np.load('/root/code/gazehoi-diffusion/dataset/gazehoi_global_obj_mean.npy'))
+            self.obj_global_std = torch.from_numpy(np.load('/root/code/gazehoi-diffusion/dataset/gazehoi_global_obj_std.npy'))
+            self.obj_local_mean = torch.from_numpy(np.load('/root/code/gazehoi-diffusion/dataset/gazehoi_local_obj_mean.npy'))
+            self.obj_local_std = torch.from_numpy(np.load('/root/code/gazehoi-diffusion/dataset/gazehoi_local_obj_std.npy'))
+   
 
         self.l2_loss = (
             lambda a, b: (a - b) ** 2
         )  # th.nn.MSELoss(reduction='none')  # must be None for handling mask later on.
-
+        
+        
     def masked_l2(self, a, b, mask):
         # assuming a.shape == b.shape == bs, J, Jdim, seqlen
         # assuming mask.shape == bs, 1, 1, seqlen
@@ -373,8 +376,17 @@ class FlowMatching:
             return data, x0_est
         else:
             return data
-
-    def training_losses(
+    def get_1verts_global(self,o1_verts,target):
+        bs = target.shape[0]
+        frames = target.shape[1]
+        tgt_R = rotation_6d_to_matrix(target[:,:,3:]) # bs,nframes,3,4
+        tgt_T = target[:,:,:3].unsqueeze(2) #bs,nframes,1,3
+        tgt_R = torch.einsum('...ij->...ji', [tgt_R]) # 对R的最后两个维度转置
+        # print(o1_verts.shape,tgt_R.shape,tgt_T.shape)
+        tgt_o1 = torch.einsum('bfpn,bfnk->bfpk',o1_verts,tgt_R) + tgt_T #    b frames 500 3
+        tgt_obj_verts = tgt_o1.reshape(bs,frames,-1).permute(0,2,1).unsqueeze(2)
+        return tgt_obj_verts
+    def training_losses_stage0_1obj(
         self,
         model,
         x_start,
@@ -397,16 +409,6 @@ class FlowMatching:
                  Some mean or variance settings may also have other keys.
         """
         mask = model_kwargs["y"]["mask"]
-        get_xyz = lambda sample: model.module.rot2xyz(
-            sample,
-            mask=None,
-            pose_rep=model.module.pose_rep,
-            translation=model.module.translation,
-            glob=model.module.glob,
-            # jointstype='vertices',  # 3.4 iter/sec # USED ALSO IN MotionCLIP
-            jointstype="smpl",  # 3.4 iter/sec
-            vertstrans=False,
-        )
 
         if model_kwargs is None:
             model_kwargs = {}
@@ -418,92 +420,128 @@ class FlowMatching:
         t = t[:, None, None, None]  # [B, 1, 1, 1]
         x_t = t * x_start + (1 - (1 - sigma_min) * t) * noise
         target = x_start - (1 - sigma_min) * noise
-
+        bs = target.shape[0]
+        nf = target.shape[-1]
         terms = {}
         model_output = model(x_t, t_1d, **model_kwargs)
         terms["rot_mse"] = self.masked_l2(
             target, model_output, mask
         )  # mean_flat(rot_mse)
 
-        target_xyz, model_output_xyz = None, None
+        target = target.permute(0, 3, 2, 1).squeeze(2).contiguous()
+        output = model_output.permute(0, 3, 2, 1).squeeze(2).contiguous()
 
-        if self.lambda_rcxyz > 0.0:
-            target_xyz = get_xyz(
-                target
-            )  # [bs, nvertices(vertices)/njoints(smpl), 3, nframes]
-            model_output_xyz = get_xyz(model_output)  # [bs, nvertices, 3, nframes]
-            terms["rcxyz_mse"] = self.masked_l2(
-                target_xyz, model_output_xyz, mask
-            )  # mean_flat((target_xyz - model_output_xyz) ** 2)
+        gt_T = target[:,:,:3].reshape(bs,nf,-1).permute(0,2,1).unsqueeze(2)
+        out_T = output[:,:,:3].reshape(bs,nf,-1).permute(0,2,1).unsqueeze(2)
+        # print(gt_T.shape)
+        # print(mask.shape)
+        terms['obj_T'] = self.masked_l2(gt_T, out_T, mask)
 
-        if self.lambda_vel_rcxyz > 0.0:
-            if self.data_rep == "rot6d" and dataset.dataname in [
-                "humanact12",
-                "uestc",
-            ]:
-                target_xyz = get_xyz(target) if target_xyz is None else target_xyz
-                model_output_xyz = (
-                    get_xyz(model_output)
-                    if model_output_xyz is None
-                    else model_output_xyz
-                )
-                target_xyz_vel = target_xyz[:, :, :, 1:] - target_xyz[:, :, :, :-1]
-                model_output_xyz_vel = (
-                    model_output_xyz[:, :, :, 1:] - model_output_xyz[:, :, :, :-1]
-                )
-                terms["vel_xyz_mse"] = self.masked_l2(
-                    target_xyz_vel, model_output_xyz_vel, mask[:, :, :, 1:]
-                )  # not used in the loss
 
-        if self.lambda_fc > 0.0:
-            torch.autograd.set_detect_anomaly(True)
-            if self.data_rep == "rot6d" and dataset.dataname in [
-                "humanact12",
-                "uestc",
-            ]:
-                target_xyz = get_xyz(target) if target_xyz is None else target_xyz
-                model_output_xyz = (
-                    get_xyz(model_output)
-                    if model_output_xyz is None
-                    else model_output_xyz
-                )
-                # 'L_Ankle',  # 7, 'R_Ankle',  # 8 , 'L_Foot',  # 10, 'R_Foot',  # 11
-                l_ankle_idx, r_ankle_idx, l_foot_idx, r_foot_idx = 7, 8, 10, 11
-                relevant_joints = [l_ankle_idx, l_foot_idx, r_ankle_idx, r_foot_idx]
-                gt_joint_xyz = target_xyz[
-                    :, relevant_joints, :, :
-                ]  # [BatchSize, 4, 3, Frames]
-                gt_joint_vel = torch.linalg.norm(
-                    gt_joint_xyz[:, :, :, 1:] - gt_joint_xyz[:, :, :, :-1], axis=2
-                )  # [BatchSize, 4, Frames]
-                fc_mask = torch.unsqueeze((gt_joint_vel <= 0.01), dim=2).repeat(
-                    1, 1, 3, 1
-                )
-                pred_joint_xyz = model_output_xyz[
-                    :, relevant_joints, :, :
-                ]  # [BatchSize, 4, 3, Frames]
-                pred_vel = pred_joint_xyz[:, :, :, 1:] - pred_joint_xyz[:, :, :, :-1]
-                pred_vel[~fc_mask] = 0
-                terms["fc"] = self.masked_l2(
-                    pred_vel,
-                    torch.zeros(pred_vel.shape, device=pred_vel.device),
-                    mask[:, :, :, 1:],
-                )
-        if self.lambda_vel > 0.0:
-            target_vel = target[..., 1:] - target[..., :-1]
-            model_output_vel = model_output[..., 1:] - model_output[..., :-1]
-            terms["vel_mse"] = self.masked_l2(
-                target_vel[:, :-1, :, :],  # Remove last joint, is the root location!
-                model_output_vel[:, :-1, :, :],
-                mask[:, :, :, 1:],
-            )  # mean_flat((target_vel - model_output_vel) ** 2)
+        # obj verts loss
+        # print(model_kwargs['y']['obj_points'].shape)
+        length = model.length
+        # print(length)
+        obj_verts = model_kwargs['y']['obj_points'][:,:500].reshape(-1,500,3).unsqueeze(1).repeat(1,length,1,1) # (b, nframs,npoints,3) 只截取物体的部分
+        
+        tgt_obj_verts = self.get_1verts_global(obj_verts,target)
+        out_obj_verts = self.get_1verts_global(obj_verts,output)
+        terms['obj_verts'] = self.masked_l2(tgt_obj_verts, out_obj_verts, mask)
 
-        terms["loss"] = (
-            terms["rot_mse"]
-            + (self.lambda_vel * terms.get("vel_mse", 0.0))
-            + (self.lambda_rcxyz * terms.get("rcxyz_mse", 0.0))
-            + (self.lambda_fc * terms.get("fc", 0.0))
-        )
+        vel = model_output[:,:,:,1:] -  model_output[:,:,:,:-1]
+        # print(vel.shape)
+        terms['time_smooth'] = self.masked_l2(vel, torch.zeros_like(vel),mask[:,:,:,1:])
+
+        terms["loss"] = 10*terms["rot_mse"] + 30* terms['obj_T'] + 10*terms['obj_verts'] + terms['time_smooth']
+        return terms
+    
+    def training_losses_o2h_mid(
+        self,
+        model,
+        x_start,
+        t,
+        model_kwargs=None,
+        noise=None,
+        dataset=None,
+        sigma_min=1e-4,
+    ):
+        """
+        Compute training losses for a single timestep.
+
+        :param model: the model to evaluate loss on.
+        :param x_start: the [N x C x ...] tensor of inputs.
+        :param t: a batch of timestep indices.
+        :param model_kwargs: if not None, a dict of extra keyword arguments to
+            pass to the model. This can be used for conditioning.
+        :param noise: if specified, the specific Gaussian noise to try to remove.
+        :return: a dict with the key "loss" containing a tensor of shape [N].
+                 Some mean or variance settings may also have other keys.
+        """
+        mask = model_kwargs["y"]["mask"]
+
+        if model_kwargs is None:
+            model_kwargs = {}
+        if noise is None:
+            noise = torch.randn_like(x_start)
+        assert t is None
+        t = torch.rand(len(x_start), device=x_start.device, dtype=x_start.dtype)
+        t_1d = t[:,]  # [B, 1, 1, 1]
+        t = t[:, None, None, None]  # [B, 1, 1, 1]
+        x_t = t * x_start + (1 - (1 - sigma_min) * t) * noise
+        target = x_start - (1 - sigma_min) * noise
+        bs = target.shape[0]
+        nf = target.shape[-1]
+        terms = {}
+        model_output = model(x_t, t_1d, **model_kwargs)
+        terms["rot_mse"] = self.masked_l2(
+            target, model_output, mask
+        )  # mean_flat(rot_mse)
+
+        tips = [15,3,6,12,9,35,23,26,32,29]
+
+        connections = [
+            (0, 1), (1, 2), (2, 3), (3, 4),       # 拇指
+            (0, 5), (5, 6), (6, 7), (7, 8),       # 食指
+            (0, 9), (9, 10), (10, 11), (11, 12),  # 中指
+            (0, 13), (13, 14), (14, 15), (15, 16), # 无名指
+            (0, 17), (17, 18), (18, 19), (19, 20)  # 小指
+        ]
+        # .permute(0, 3, 2, 1).squeeze(2).contiguous()
+        pred_left_joints = model_output[:, :63, :, :].squeeze(2).permute(0,2,1).contiguous().reshape(-1,30,21,3) # b,t,21,3
+        pred_right_joints = model_output[:, 63:126, :, :].squeeze(2).permute(0,2,1).contiguous().reshape(-1,30,21,3)
+        tgt_left_joints = target[:, :63, :, :].squeeze(2).permute(0,2,1).contiguous().reshape(-1,30,21,3)
+        tgt_right_joints = target[:, 63:126, :, :].squeeze(2).permute(0,2,1).contiguous().reshape(-1,30,21,3)
+
+        def compute_bone_lengths(joints, connections):
+            bones = []
+            for connection in connections:
+                joint_start, joint_end = connection
+                bone = (joints[:,:,joint_start] - joints[:,:,joint_end]).norm(dim=-1, keepdim=True)
+                bones.append(bone)
+            # print(torch.cat(bones, dim=-1).shape)
+            return torch.cat(bones, dim=-1)
+
+        # 计算左右手的骨骼长度
+        pred_left_bones = compute_bone_lengths(pred_left_joints, connections)
+        tgt_left_bones = compute_bone_lengths(tgt_left_joints, connections)
+        pred_right_bones = compute_bone_lengths(pred_right_joints, connections)
+        tgt_right_bones = compute_bone_lengths(tgt_right_joints, connections)
+
+        def mix_masked_mse(pred, tgt):
+            mse_loss = F.mse_loss(pred, tgt, reduction='none')
+            masked_mse_loss = mse_loss
+            return masked_mse_loss.mean()
+
+        # 计算左右手的骨骼损失
+        left_bone_loss = mix_masked_mse(pred_left_bones, tgt_left_bones)
+        right_bone_loss = mix_masked_mse(pred_right_bones, tgt_right_bones)
+
+
+        # 合并损失
+        terms['bone_length'] = left_bone_loss + right_bone_loss
+
+
+        terms['loss'] =  terms["rot_mse"] * 100  + terms['bone_length'] * 100
         return terms
 
     def fc_loss_rot_repr(self, gt_xyz, pred_xyz, mask):
