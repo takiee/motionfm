@@ -13,6 +13,7 @@ from utils.model_util import create_model_and_diffusion, create_model_and_flow
 from train_platforms import *  # required for the eval operation
 import hydra
 import torch
+from diffusion import logger
 
 
 @hydra.main(config_path="config", config_name="config_base", version_base=None)
@@ -41,6 +42,7 @@ def main(cfg):
 
     fixseed(cfg.seed)
     dist_util.setup_dist(cfg.device)
+    logger.configure(cfg.log_dir)
     #! wandb需要花钱
     # train_platform = Wandb_ClearML_Platform(cfg.training.save_dir, cfg.wandb, cfg=cfg)
     train_platform = TensorboardPlatform(cfg.training.save_dir)

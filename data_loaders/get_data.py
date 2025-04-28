@@ -28,6 +28,8 @@ def get_dataset_class(name):
         return GazeHOIDataset_stage0_1obj
     elif name == 'gazehoi_o2h_mid':
         return GazeHOIDataset_o2h_mid
+    elif name == 'gazehoi_o2h_mid_2hand_assemobj':
+        return GazeHOIDataset_o2h_mid_2hand_assemobj
     else:
         raise ValueError(f"Unsupported dataset name [{name}]")
 
@@ -66,14 +68,24 @@ def get_dataset_loader(
     print("creating data loader...")
     dataset = get_dataset(name, num_frames, split, hml_mode, is_debug=is_debug)
     collate = get_collate_fn(name, hml_mode)
-
-    loader = DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=num_workers,
-        drop_last=True,
-        collate_fn=collate,
-    )
+    
+    if split == 'test':
+        loader = DataLoader(
+            dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=num_workers,
+            drop_last=False,
+            collate_fn=collate,
+        )
+    else:
+        loader = DataLoader(
+            dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            num_workers=num_workers,
+            drop_last=True,
+            collate_fn=collate,
+        )
 
     return loader

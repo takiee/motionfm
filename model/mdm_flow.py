@@ -124,6 +124,20 @@ class MDM_Flow_Gaze(nn.Module):
                                             dropout=0.1)
             self.encode_hand_pose = nn.Sequential(nn.Linear(291,128), nn.ELU(),
                                                 nn.Linear(128,self.latent_dim) )
+        elif self.dataset == 'gazehoi_o2h_mid_2hand_assemobj':
+            self.encode_obj_pose = nn.Linear(12,self.latent_dim)
+            
+            self.encode_obj_mesh = PointNet2SemSegSSGShape({'feat_dim': self.latent_dim})
+            self.encode_obj = PerceiveEncoder(n_input_channels=self.latent_dim,
+                                            n_latent=self.length,
+                                            n_latent_channels=self.latent_dim,
+                                            n_self_att_heads=4,
+                                            n_self_att_layers=3,
+                                            dropout=0.1)
+            self.encode_hand_pose = nn.Sequential(nn.Linear(726+63,128), nn.ELU(), #TODO: fix dim
+                                                nn.Linear(128,self.latent_dim) )
+            self.encode_goal_pose = nn.Sequential(nn.Linear(726+63,128), nn.ELU(), #TODO: fix dim
+                                                nn.Linear(128,self.latent_dim) )
 
 
 
@@ -230,7 +244,25 @@ class MDM_Flow_Gaze(nn.Module):
             init_hand_emb = self.encode_hand_pose(y['init_hand_pose']) #b,D
 
             x = x  + global_obj_feat + obj_feat.permute(1,0,2).contiguous() + init_hand_emb 
-        
+        elif self.dataset == 'gazehoi_o2h_mid_2hand_assemobj':
+            """
+            提取物体pose和shape特征
+            """
+            bs, nf, _ = y['obj_pose'].shape
+            obj_pose = y['obj_pose']
+            # print(obj_pose.shape)
+            obj_pose_emb = self.encode_obj_pose(obj_pose)
+
+            points = y['obj_points']
+            points_feat, global_obj_feat= self.encode_obj_mesh(points.repeat(1, 1, 2))
+
+            obj_feat = self.encode_obj(obj_pose_emb)
+
+            init_hand_emb = self.encode_hand_pose(y['init_hand_pose']) #b,D
+            # goal_hand_emb = self.encode_goal_pose(y['goal_hand_pose']) #b,D
+
+            x = x  + global_obj_feat + obj_feat.permute(1,0,2).contiguous() + init_hand_emb 
+            # x = x  + global_obj_feat + obj_feat.permute(1,0,2).contiguous() + init_hand_emb + goal_hand_emb
 
         if self.arch == "trans_enc":
             # adding the timestep embed

@@ -8,11 +8,11 @@
         "program": "${workspaceFolder}/train.py",
         "console": "integratedTerminal",
         "env": {
-          "CUDA_VISIBLE_DEVICES": "0"
+          "CUDA_VISIBLE_DEVICES": "1"
         },
         "args": [
           "name=test",
-          "dataset=gazehoi_o2h_mid",
+          "dataset=gazehoi_o2h_mid_2hand_assemobj",
           "training.eval_during_training=0",
           "model.cond_mask_prob=0.1",
           "guidance_param=2.5",

@@ -221,6 +221,10 @@ def collate_g2ho(batch):
     if 'gaze' in notnone_batches[0] and notnone_batches[0]['gaze'] is not None:
         gaze = [b['gaze']for b in notnone_batches]
         cond['y'].update({'gaze': torch.as_tensor(gaze).float()})
+    if 'gt' in notnone_batches[0] and notnone_batches[0]['gt'] is not None:
+        gt = [b['gt']for b in notnone_batches]
+        cond['y'].update({'gt': torch.as_tensor(gt).float()})
+
     
     seqbatch = [b['seq_name'] for b in notnone_batches] 
     cond['y']['seq_name']= seqbatch
@@ -232,6 +236,7 @@ def collate_g2ho(batch):
 def o2h_mid_collate(batch):
     adapted_batch = [{
         'inp': torch.tensor(b[1].T).float().unsqueeze(1), # [seqlen, J] -> [J, 1, seqlen]
+        'gt':b[1],
         'init_hand_pose':b[1][0],
         'obj_pose': b[2],
         'obj_points':b[3],

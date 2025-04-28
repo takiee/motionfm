@@ -63,7 +63,7 @@ suffix_start: 0.75 #used for in_between
 edit_alter_prompts: null # alter the text prompts when editing, e.g., in-between, upper-body
 
 # generate
-motion_length: 6.0
+motion_length: 30
 input_text: '' #./assets/example_text_prompts.txt
 action_file: ''
 text_prompt: ''
@@ -93,6 +93,6 @@ hydra:
     dir: ${log_dir}
 
 # for convenience
-log_dir: ./outputs/${name}/${now:%d-%m-%Y}/${now:%H-%M-%S}
+log_dir: /data/nas_24/motionfm/outputs/${name}/${now:%d-%m-%Y}/${now:%H-%M-%S}
 ckpt_dir: ${log_dir}/ckpts
 python_version: ${python_version:}

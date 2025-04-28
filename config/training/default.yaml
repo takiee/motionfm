@@ -6,7 +6,8 @@ resume_checkpoint: ""
 num_steps: 600_000
 num_frames: 60 #num_frames
 
-lr: 1e-4
+lr: 1e-5
+# lr: 1e-4
 weight_decay: 0.0
 lr_anneal_steps: 0
 

@@ -25,6 +25,8 @@ from tqdm import tqdm
 import eval_humanact12_uestc
 from data_loaders.get_data import get_dataset_loader
 
+from generate_g2o import main as generate_g2o
+from generate_o2h import main as generate_o2h
 
 def is_rank_zero():
     return ("LOCAL_RANK" not in os.environ) or (int(os.environ["LOCAL_RANK"]) == 0)
@@ -229,6 +231,13 @@ class TrainLoop_Flow:
                     #     )
 
                     # self.evaluate()
+                    val_loss = self.generate_during_training()
+                    self.train_platform.report_scalar(
+                        name="val_loss",
+                        value=val_loss,
+                        iteration=self.step,
+                        group_name="val",
+                    )
                     self.model.train()
 
                 self.step += 1
@@ -241,7 +250,15 @@ class TrainLoop_Flow:
         if (self.step - 1) % self.save_interval != 0:
             self.save()
             self.evaluate()
-
+    def generate_during_training(self):
+        gen_args = copy.deepcopy(self.cfg)
+        gen_args.model_path = os.path.join(self.save_dir, self.ckpt_file_name())
+        if self.dataset == 'gazehoi_stage0_1obj':
+            val_loss = generate_g2o(gen_args)
+        elif self.dataset == 'gazehoi_o2h_mid' or self.dataset == 'gazehoi_o2h_mid_2hand_assemobj':
+            val_loss = generate_o2h(gen_args)
+        return val_loss
+        
     def evaluate(self):
         print("evaluation....")
         if not self.cfg.training.eval_during_training:
@@ -352,7 +369,7 @@ class TrainLoop_Flow:
                     model_kwargs=micro_cond,
                     dataset=self.dataloader_train.dataset
                 )
-            elif self.dataset == 'gazehoi_o2h_mid':
+            elif self.dataset == 'gazehoi_o2h_mid' or self.dataset == 'gazehoi_o2h_mid_2hand_assemobj':
                 compute_losses = functools.partial(
                     self.dynamic.training_losses_o2h_mid,
                     self.ddp_model,

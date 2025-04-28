@@ -92,14 +92,14 @@ def compute_angular_acceleration_nofor(angular_velocity):
 
 
 class GazeHOIDataset_o2h_mid(data.Dataset):
-    def __init__(self, mode='mid',datapath='/root/code/seqs/gazehoi_list_train_new.txt',split='train',hint_type='goal_pose'):
+    def __init__(self, mode='mid',datapath='/root/code/seqs/gazehoi_list_train_0718.txt',split='train',hint_type='goal_pose'):
         if split == 'test':
             # datapath = '/root/code/seqs/gazehoi_list_train_new.txt'
-            datapath = '/root/code/seqs/gazehoi_list_test_new.txt'
+            datapath = '/root/code/seqs/gazehoi_list_test_0718.txt'
         self.root = '/root/code/seqs/0303_data/'
         self.obj_path = '/root/code/seqs/object/'
         with open(datapath,'r') as f:
-            info_list = f.readlines()[:64]
+            info_list = f.readlines()[:32]
         self.seqs = []
         for info in info_list:
             seq = info.strip()
@@ -219,14 +219,15 @@ class GazeHOIDataset_o2h_mid(data.Dataset):
         return seq, hand_all, obj_pose, obj_verts, hand_kp.shape[0],hand_shape
 
 class GazeHOIDataset_o2h_mid_2hand_assemobj(data.Dataset):
-    def __init__(self, mode='mid_2hand_assmobj',datapath='/root/code/seqs/gazehoi_list_train_0718_new.txt',split='train',hint_type='goal_pose'):
+    def __init__(self, mode='mid_2hand_assmobj',datapath='/root/code/seqs/gazehoi_list_train_0718.txt',split='train',hint_type='goal_pose'):
     # def __init__(self, mode='mid_2hand_assmobj',datapath='/root/code/seqs/gazehoi_list_train_0718.txt',split='train',hint_type='goal_pose'):
     # def __init__(self, mode='mid_2hand_assmobj',datapath='/root/code/seqs/gazehoi_list_train_0718_assem.txt',split='train',hint_type='goal_pose'):
-        if split == 'test':
+        if split == 'test' or split == 'val':
             # datapath = '/root/code/seqs/gazehoi_list_train_new.txt'
             # datapath = '/root/code/seqs/gazehoi_list_train_0718_assem.txt'
             # datapath = '/root/code/seqs/gazehoi_list_test_0718_assem.txt'
-            datapath = '/root/code/seqs/gazehoi_list_test_0820_assem.txt'
+            datapath = '/root/code/seqs/gazehoi_list_test_0718.txt'
+            # datapath = '/root/code/seqs/gazehoi_list_test_0820_assem.txt'
         self.root = '/root/code/seqs/0303_data/'
         self.obj_path = '/root/code/seqs/object/'
         self.pred_obj_root = '/nas/gazehoi-diffusion/final_result/0817_for_demo_assem/' # TODO:修改预测物体存储路径
@@ -260,7 +261,7 @@ class GazeHOIDataset_o2h_mid_2hand_assemobj(data.Dataset):
             obj_verts = torch.tensor(np.load(join(self.obj_path,active_obj,'resampled_500_trans.npy'))).float()
             obj_normals = torch.tensor(np.load(join(self.obj_path,active_obj,'resampled_500_trans_normal.npy'))).float()
             gt_obj_pose = torch.tensor(np.load(join(seq_path,active_obj+'_pose_trans.npy'))).float()
-            if split == 'train':
+            if split == 'train' or split == 'val':
                 obj_pose = torch.tensor(np.load(join(seq_path,active_obj+'_pose_trans.npy'))).float()
                 # obj_rot = obj_pose[:,:3,:3]
                 # obj_trans = obj_pose[:,:3,3]
@@ -406,7 +407,7 @@ class GazeHOIDataset_o2h_mid_2hand_assemobj(data.Dataset):
 
                     self.datalist.append(data)
             
-            if split == 'test':
+            elif split == 'test':
                 right_hand_params = torch.tensor(np.load(join(self.pred_obj_root,seq,'gt_right_mano.npy')))
                 left_hand_params = torch.tensor(np.load(join(self.pred_obj_root,seq,'gt_left_mano.npy')))
                 gt_obj_pose = torch.tensor(np.load(join(self.pred_obj_root,seq,'gt_obj_pose.npy'))).float()
@@ -721,12 +722,12 @@ def read_xyz(path):
 
 
 class GazeHOIDataset_stage0_1obj(data.Dataset):
-    # def __init__(self, mode='stage0', datapath='/root/code/seqs/gazehoi_list_train_0718_new.txt', split='train',hint_type='goal_pose'):
-    def __init__(self, mode='stage0', datapath='/root/code/seqs/gazehoi_list_train_0303.txt', split='train',hint_type='goal_pose'):
+    def __init__(self, mode='stage0', datapath='/root/code/seqs/gazehoi_list_train_0718.txt', split='train',hint_type='goal_pose'):
+    # def __init__(self, mode='stage0', datapath='/root/code/seqs/gazehoi_list_train_0303.txt', split='train',hint_type='goal_pose'):
         # super().__init__()
         if split == 'test':
             # datapath = '/root/code/seqs/gazehoi_list_test_0303.txt'
-            datapath = '/root/code/seqs/gazehoi_list_test_0818_assem.txt'
+            datapath = '/root/code/seqs/gazehoi_list_test_0718.txt'
         print(datapath)
         self.root = '/root/code/seqs/0303_data/'
         self.obj_path = '/root/code/seqs/object/'
